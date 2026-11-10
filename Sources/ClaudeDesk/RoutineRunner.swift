@@ -153,7 +153,7 @@ final class RoutineRunner {
         log("\(event).started", actor: "runner", subject: label,
             details: ["run": runID, "agent": agent.id.uuidString, "requested": request?.requestedBy ?? (isRoutine ? "schedule" : "user"), "kind": origin.kind])
         let text = isRoutine ? prompt(for: routine, runID: runID, request: request, lastRun: lastRun) : manualPrompt(for: routine, runID: runID, title: label, kind: origin.kind)
-        let arguments = Self.arguments(for: routine, agent: agent, runID: runID, prompt: text)
+        let arguments = Self.arguments(for: routine, agent: agent, runID: runID, prompt: text, vault: Workspace.vault(in: workspace))
         let output = execute(arguments, in: agent, timeout: TimeInterval(routine.timeoutSeconds), started: { pid in
             live.value.pid = pid; saveLive()
         }, step: { step in
@@ -218,21 +218,27 @@ final class RoutineRunner {
     }
 
     /// Restricted profile proven in the spike: default mode, no prompts, and only the listed tools allowed.
-    static func arguments(for routine: Routine, agent: AgentProfile, runID: String, prompt: String) -> [String] {
+    /// Agents connected to atrium-memory also get its tools, and change the vault only through them.
+    static func arguments(for routine: Routine, agent: AgentProfile, runID: String, prompt: String, vault: URL? = nil) -> [String] {
         var tools = ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "WebSearch", "Skill"]
         var allowed = ["Read", "Glob", "Grep", "WebSearch", "Skill"]
         if routine.tools.contains("web-fetch") { tools.append("WebFetch"); allowed.append("WebFetch") }
+        let memoryVault = vault.flatMap { MemoryTool.isConnected(agent) ? $0 : nil }
+        let vaultPaths = memoryVault.map { Set([$0.path, $0.resolvingSymlinksInPath().path]) } ?? []
         for directory in [agent.path] + additionalDirectories(of: agent) {
-            allowed.append("Edit(/" + directory + "/**)")
+            if !vaultPaths.contains(directory) { allowed.append("Edit(/" + directory + "/**)") }
             let checker = URL(fileURLWithPath: directory).appendingPathComponent(".tools/vault_check.py").path
             if FileManager.default.fileExists(atPath: checker) {
                 allowed.append("Bash(python3 \(checker))")
                 allowed.append("Bash(python3 \(checker) *)")
             }
         }
-        return ["-p", "--output-format", "stream-json", "--verbose", "--session-id", runID, "--max-turns", String(routine.maxTurns),
-                "--permission-mode", "default", "--permission-prompts", "none",
-                "--tools", tools.joined(separator: ","), "--allowedTools"] + allowed + ["--", prompt]
+        if memoryVault != nil { allowed.append(MemoryTool.toolPermission) }
+        var arguments = ["-p", "--output-format", "stream-json", "--verbose", "--session-id", runID, "--max-turns", String(routine.maxTurns),
+                         "--permission-mode", "default", "--permission-prompts", "none",
+                         "--tools", tools.joined(separator: ","), "--allowedTools"] + allowed
+        if let memoryVault { arguments += ["--disallowedTools", MemoryTool.vaultEditRule(memoryVault)] }
+        return arguments + ["--", prompt]
     }
 
     static func additionalDirectories(of agent: AgentProfile) -> [String] {

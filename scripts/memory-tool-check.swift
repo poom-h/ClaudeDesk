@@ -13,7 +13,8 @@ struct MemoryToolChecks {
         try checkSettingsAndInstructions(host: host)
         try checkSettingsEdgeCases(host: host)
         try checkInstructionsSafety(host: host)
-        print("Passed: atrium-memory server entry, settings approval and edit block, instructions, project config.")
+        try checkRunnerArguments(host: host)
+        print("Passed: atrium-memory server entry, settings approval and edit block, instructions, project config, runner arguments.")
     }
 
     /// A fake bundled binary at <host>/<app>/Contents/MacOS/atrium-memory.
@@ -328,5 +329,39 @@ struct MemoryToolChecks {
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: mcpURL(agent).path)
         let unchanged = try Data(contentsOf: mcpURL(agent))
         precondition(unchanged == text, "an unreadable .mcp.json must be left unchanged")
+    }
+
+    static func checkRunnerArguments(host: URL) throws {
+        let agent = try AgentEnvironment.create(name: "Runner", purpose: "x", host: host)
+        let vault = host.appendingPathComponent("RunnerVault")
+        try FileManager.default.createDirectory(at: vault.appendingPathComponent(".tools"), withIntermediateDirectories: true)
+        try "".write(to: vault.appendingPathComponent(".tools/vault_check.py"), atomically: true, encoding: .utf8)
+        let settingsURL = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        try JSONSerialization.data(withJSONObject: ["permissions": ["additionalDirectories": [vault.path]]]).write(to: settingsURL)
+        let routine = Routine(name: "nightly")
+        let vaultEdit = "Edit(/" + vault.path + "/**)"
+        let checker = "Bash(python3 " + vault.appendingPathComponent(".tools/vault_check.py").path + ")"
+
+        // Not connected: today's behaviour, unchanged.
+        let before = RoutineRunner.arguments(for: routine, agent: agent, runID: "r1", prompt: "go", vault: vault)
+        precondition(before.contains(vaultEdit) && !before.contains("mcp__atrium-memory") && !before.contains("--disallowedTools"))
+
+        // Connected: the tools are allowed, vault edits are not granted and are explicitly disallowed.
+        _ = try MemoryTool.connectServer(agent, executable: "/Applications/ClaudeDesk.app/Contents/MacOS/atrium-memory", vault: vault)
+        let after = RoutineRunner.arguments(for: routine, agent: agent, runID: "r2", prompt: "go", vault: vault)
+        let separator = after.firstIndex(of: "--")!
+        precondition(after.contains("mcp__atrium-memory") && after.firstIndex(of: "mcp__atrium-memory")! < separator)
+        let allowedStart = after.firstIndex(of: "--allowedTools")! + 1
+        let disallowedAt = after.firstIndex(of: "--disallowedTools")!
+        precondition(!after[allowedStart..<disallowedAt].contains(vaultEdit), "connected agents must not be granted Edit on the vault")
+        let disallowed = after.firstIndex(of: "--disallowedTools")!
+        precondition(after[disallowed + 1] == vaultEdit && disallowed < separator)
+        precondition(after.contains(checker), "the vault checker stays allowed")
+        precondition(after.contains("Edit(/" + agent.path + "/**)"), "the agent's own folder stays editable")
+        precondition(after.last == "go" && after[separator + 1] == "go")
+
+        // Without a vault (older callers), nothing changes for connected agents either.
+        let noVault = RoutineRunner.arguments(for: routine, agent: agent, runID: "r3", prompt: "go")
+        precondition(!noVault.contains("mcp__atrium-memory") && !noVault.contains("--disallowedTools"))
     }
 }
