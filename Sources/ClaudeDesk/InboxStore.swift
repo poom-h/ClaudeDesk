@@ -118,7 +118,26 @@ extension DeskStore {
             } catch { problems.append("\(agent.name): \(error.localizedDescription)") }
         }
         UserDefaults.standard.set(Array(widgetConnected), forKey: widgetKey)
-        if !problems.isEmpty { error = "Could not connect every agent to the Inbox.\n" + problems.joined(separator: "\n") }
+        // atrium-memory arrived in 3.8.0. The server entry is checked on every launch, so a moved app is repaired.
+        // Settings and instructions are added once per agent, so later edits to those files are respected.
+        if let executable = MemoryTool.bundledExecutable {
+            let memoryKey = "workspaceConnectedAgents.memory.v1"
+            var memoryConnected = Set(UserDefaults.standard.stringArray(forKey: memoryKey) ?? [])
+            let vault = Workspace.vault(in: workspace)
+            for agent in agents {
+                do {
+                    let firstTime = !memoryConnected.contains(agent.id.uuidString)
+                    let change = try MemoryTool.connect(agent, executable: executable, vault: vault, firstTime: firstTime)
+                    if firstTime { memoryConnected.insert(agent.id.uuidString) }
+                    if firstTime || change != .unchanged {
+                        log("agent.memory-connected", actor: "app", subject: agent.name,
+                            details: ["agent": agent.id.uuidString, "change": "\(change)"])
+                    }
+                } catch { problems.append("\(agent.name): \(error.localizedDescription)") }
+            }
+            UserDefaults.standard.set(Array(memoryConnected), forKey: memoryKey)
+        }
+        if !problems.isEmpty { error = "Could not finish connecting every agent.\n" + problems.joined(separator: "\n") }
         skillRevision += 1
     }
 

@@ -297,6 +297,16 @@ struct SettingsView: View {
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Claude runs inside the app with its normal permissions and sign-in. Multiple instances share their project folder; each has an independent terminal.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            Text("Memory Vault tools").font(.headline)
+            Text("Agents read and change the Memory Vault through atrium-memory, which is built into ClaudeDesk. To use it in your own Claude sessions too, copy this setup into a project's .mcp.json.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button("Copy MCP config") {
+                guard let executable = MemoryTool.bundledExecutable else { return }
+                let vault = Workspace.vault(in: URL(fileURLWithPath: store.workspacePath))
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(MemoryTool.projectConfig(executable: executable, vault: vault), forType: .string)
+            }.disabled(store.workspacePath.isEmpty || MemoryTool.bundledExecutable == nil)
         }.padding(24)
     }
 }
