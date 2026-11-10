@@ -82,12 +82,12 @@ Maps contain no facts. Explanations belong in notes.
 
 For a request to save knowledge:
 
-1. Start from Home and follow the relevant maps; then search titles and contents for equivalent or related information.
+1. Start from Home and follow the relevant maps with `vault_read`; then use `vault_search` for equivalent or related information.
 2. Reuse an equivalent note. Propose or make a scoped update when the request clearly authorizes it; create a separate note when it serves a different purpose. Do not silently replace conflicting claims.
 3. Preserve the source URL, author, date, or supplied provenance when available. Distinguish direct quotations, source summaries, the user's experience, and the agent's inference. Never invent citations or missing facts.
 4. Choose a suitable note format. Use existing type and topic names before creating synonyms. Do not force an uncertain capture into a category; Inbox is a valid destination.
 5. Write a clear title and useful content. Preserve code, commands, prerequisites, and limitations accurately. Mark unknown or unverified details explicitly.
-6. Add the note to the right map, creating a sub-map only when the rules above call for one. Link relevant existing notes when the relationship is meaningful, and explain the relationship.
+6. Add the note to the right map, creating a sub-map only when the rules above call for one. Link relevant existing notes when the relationship is meaningful, and explain the relationship. Save through the `vault_*` tools: `vault_write` to create a note, `vault_edit` or `vault_append` to change one, always passing the `version` from your last `vault_read`.
 7. Run the vault checker and fix any problem the change caused.
 8. Report briefly what was saved or updated and link to the note. Mention unresolved gaps or conflicts.
 
@@ -140,7 +140,7 @@ Properties may support optional Obsidian Bases views such as “AWS guides” or
 
 ## Retrieval
 
-Start from Home, which is already loaded, and follow map descriptions to the likely note before searching the whole vault. Return the relevant notes with a concise answer and clear links; do not create another saved note unless asked or already authorized. If the answer was missing or hard to find, suggest a map entry or note that would have made it easy.
+Start from Home, which is already loaded, and follow map descriptions with `vault_read` (it returns each note's links) to the likely note before using `vault_search` on the whole vault. Return the relevant notes with a concise answer and clear links; do not create another saved note unless asked or already authorized. If the answer was missing or hard to find, suggest a map entry or note that would have made it easy.
 
 ## Starting interview
 

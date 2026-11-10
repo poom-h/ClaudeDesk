@@ -158,6 +158,7 @@ The middle of the Cockpit is now only the memory graph. Widgets live in two side
 
 When an agent reads or searches a vault note, its star flares with a warm light for 4 seconds, labelled with the note and the agent ("Tech · Atlas"). This is separate from the ring that marks a changed note.
 - **Source:** agents' transcripts (`<agent>/.runtime/projects/*/*.jsonl`), followed every 2 seconds while the Cockpit is open (`VaultActivity.swift`). Only lines added since the last check are read, older conversations aren't replayed, and nothing is written.
+- **Source (3.8):** atrium-memory's audit log, `MemoryVault/.atrium-memory/audit.jsonl`, followed the same way: a successful `vault_read` lights its note and a successful `vault_search` lights its results, labelled with the call's `actor` (the agent's name). Transcripts remain the fallback for direct reads and `@` imports.
 - **What counts:** any new transcript line that names a vault note by its full path: reads, search results (`Grep`, `Glob`), shell commands, edits and writes. Conversations and background runs both count. Folders and hidden tool files aren't notes.
 - **Motion:** the graph animates at 20 fps only while a flare or pulse is showing; Reduce motion turns the flare off.
 

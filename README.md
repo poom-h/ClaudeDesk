@@ -74,6 +74,7 @@ bash scripts/test.sh
 bash scripts/test-terminals.sh
 bash scripts/test-agents.sh
 bash scripts/test-agent-runtime.sh
+bash scripts/test-memory-tool.sh
 ```
 
 The build uses `swiftc` directly and the vendored SwiftTerm v1.13.0 library, with no runtime downloads. A local compiler-only overlay handles duplicate SwiftBridging headers in some Command Line Tools installations without modifying installed tools. The standard Swift package is also provided for healthy Xcode installations.
@@ -191,3 +192,13 @@ The Studio has a new **Space** look matching the Cockpit (starfield, glass sideb
 **Google mail and calendar** (read-only, several accounts) connect in Settings › Integrations. **Jev** (TypeSafe) sorts each email into a category and flags urgent, needs-reply and suspicious mail; the **Mail** and **Schedule** widgets show the result, and Atlas uses it when you ask about your day. Keys and sign-ins live in the macOS Keychain. The agents' Inbox is now called the **Desk**.
 
 By default mail and calendar come from **this Mac** (Apple Mail and macOS calendars, so your Gmail stays connected with no Google setup); the Google API remains an advanced option.
+
+## Version 3.8 · Memory Vault tools
+
+Agents now reach the Memory Vault through **atrium-memory**, an MCP server built into ClaudeDesk (`Contents/MacOS/atrium-memory`; source: github.com/poom-h/atrium-memory). On launch, every agent gets it in its `.mcp.json`, approved in its local settings so routines and Cockpit runs can use it too, and a "Memory Vault tools" section in its CLAUDE.md. Agents search and follow maps with `vault_search` and `vault_read`, and change notes with `vault_edit`, `vault_append` and `vault_write`. Every change is checked against the version the agent last read, written all at once, and logged to `MemoryVault/.atrium-memory/audit.jsonl` without note content.
+
+Direct file edits inside the vault are blocked for agents (an `Edit` deny rule), so the tools are the only way to change it; reading files and running the vault checker still work. Moving ClaudeDesk.app is fine: the next launch repoints every agent's entry. Your own entries and other servers are never changed. To use the same tools in your own Claude sessions, Settings › General › Copy MCP config.
+
+The Cockpit's memory flare now follows the audit log, labelled with the agent's name, with the transcript scan kept as a fallback.
+
+`bash scripts/test-memory-tool.sh` covers the server entry (add, keep, repair after a move, user entries, invalid files), settings and instructions, runner arguments and the audit flare.
