@@ -97,6 +97,7 @@ enum MemoryTool {
         settings["permissions"] = permissions
         guard NSDictionary(dictionary: settings) != original else { return }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // The file is rewritten with sorted keys and pretty-printing; only the three lists above change.
         try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
             .write(to: url, options: .atomic)
     }
@@ -128,7 +129,10 @@ enum MemoryTool {
     /// Appends the Memory Vault tools section to CLAUDE.md once; the rest of the file is kept.
     static func connectInstructions(_ agent: AgentProfile, vault: URL) throws {
         let url = URL(fileURLWithPath: agent.path).appendingPathComponent("CLAUDE.md")
-        var text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        var text = ""
+        if FileManager.default.fileExists(atPath: url.path) {
+            text = try String(contentsOf: url, encoding: .utf8)   // an unreadable file throws; it is never overwritten
+        }
         guard !text.contains(instructionsMarker) else { return }
         if !text.isEmpty && !text.hasSuffix("\n") { text += "\n" }
         text += instructionsSection(vault: vault)

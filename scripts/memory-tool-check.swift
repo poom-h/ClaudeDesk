@@ -11,6 +11,8 @@ struct MemoryToolChecks {
         try checkUnchangedPaths(host: host)
         try checkReadErrors(host: host)
         try checkSettingsAndInstructions(host: host)
+        try checkSettingsEdgeCases(host: host)
+        try checkInstructionsSafety(host: host)
         print("Passed: atrium-memory server entry, settings approval and edit block, instructions, project config.")
     }
 
@@ -171,6 +173,63 @@ struct MemoryToolChecks {
         let parsed = try JSONSerialization.jsonObject(with: Data(project.utf8)) as! [String: Any]
         let entry = (parsed["mcpServers"] as! [String: Any])["atrium-memory"] as! [String: Any]
         precondition((entry["env"] as! [String: String])["ATRIUM_MEMORY_ACTOR"] == "project" && entry["command"] as? String == exe.path)
+    }
+
+    /// Settings that have the wrong shape are reported and not rewritten; a settings path that can't be read throws its own error.
+    static func checkSettingsEdgeCases(host: URL) throws {
+        let vault = host.appendingPathComponent("EdgeVault")
+        let agent = try AgentEnvironment.create(name: "Edge", purpose: "Test", host: host)
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        for invalid in ["{\"permissions\": \"x\"}", "{\"enabledMcpjsonServers\": \"x\"}"] {
+            try invalid.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try MemoryTool.connectSettings(agent, vault: vault)
+                fatalError("invalid settings should be reported: \(invalid)")
+            } catch is AgentEnvironment.Failure {}
+            let unchanged = try String(contentsOf: url, encoding: .utf8)
+            precondition(unchanged == invalid)
+        }
+
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        var thrown: Error?
+        do { try MemoryTool.connectSettings(agent, vault: vault) } catch { thrown = error }
+        precondition(thrown != nil, "a settings path that is a directory must throw")
+        precondition(!(thrown is AgentEnvironment.Failure), "a read error must not be reported as invalid JSON")
+    }
+
+    /// connectInstructions must never overwrite a CLAUDE.md it cannot read; a missing one is created.
+    static func checkInstructionsSafety(host: URL) throws {
+        let vault = host.appendingPathComponent("SafetyVault")
+
+        let bad = try AgentEnvironment.create(name: "Unreadable", purpose: "Test", host: host)
+        let badURL = URL(fileURLWithPath: bad.path).appendingPathComponent("CLAUDE.md")
+        let bytes = Data([0xFF, 0xFE, 0x00])
+        try bytes.write(to: badURL)
+        var thrown: Error?
+        do { try MemoryTool.connectInstructions(bad, vault: vault) } catch { thrown = error }
+        precondition(thrown != nil, "a CLAUDE.md that is not UTF-8 must throw")
+        let badAfter = try Data(contentsOf: badURL)
+        precondition(badAfter == bytes, "a CLAUDE.md that is not UTF-8 must be left unchanged")
+
+        let dir = try AgentEnvironment.create(name: "Directory", purpose: "Test", host: host)
+        let dirURL = URL(fileURLWithPath: dir.path).appendingPathComponent("CLAUDE.md")
+        try FileManager.default.removeItem(at: dirURL)
+        try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+        thrown = nil
+        do { try MemoryTool.connectInstructions(dir, vault: vault) } catch { thrown = error }
+        precondition(thrown != nil, "a CLAUDE.md that is a directory must throw")
+        var isDirectory: ObjCBool = false
+        precondition(FileManager.default.fileExists(atPath: dirURL.path, isDirectory: &isDirectory) && isDirectory.boolValue,
+                     "a CLAUDE.md that is a directory must be left in place")
+
+        let missing = try AgentEnvironment.create(name: "Missing", purpose: "Test", host: host)
+        let missingURL = URL(fileURLWithPath: missing.path).appendingPathComponent("CLAUDE.md")
+        try FileManager.default.removeItem(at: missingURL)
+        try MemoryTool.connectInstructions(missing, vault: vault)
+        let created = try String(contentsOf: missingURL, encoding: .utf8)
+        precondition(created.contains(MemoryTool.instructionsMarker) && created.contains("## Memory Vault tools"),
+                     "a missing CLAUDE.md must be created with the section")
     }
 
     /// Canonical JSON bytes, so two values can be compared exactly.
