@@ -12,6 +12,9 @@ struct MemoryToolChecks {
         try checkReadErrors(host: host)
         try checkSettingsAndInstructions(host: host)
         try checkSettingsEdgeCases(host: host)
+        try checkVaultSwitch(host: host)
+        try checkVaultSwitchUserEdits(host: host)
+        try checkVaultSwitchForeignEntry(host: host)
         try checkInstructionsSafety(host: host)
         try checkRunnerArguments(host: host)
         try checkAuditFlare(host: host)
@@ -73,10 +76,15 @@ struct MemoryToolChecks {
         let after = try servers(agent)["atrium-memory"] as! [String: Any]
         precondition(after["command"] as? String == moved.path && after["env"] as? [String: String] == env)
 
-        // A command that still exists is not replaced, even if the app offers another path.
+        // The app's own entry follows the running app even when the old binary still exists. Env is kept.
         let elsewhere = try makeExecutable(host: host, app: "Third/ClaudeDesk.app")
-        let stays = try MemoryTool.connectServer(agent, executable: elsewhere.path, vault: vault)
-        precondition(stays == .unchanged)
+        let followed = try MemoryTool.connectServer(agent, executable: elsewhere.path, vault: vault)
+        precondition(followed == .repaired)
+        let followedEntry = try servers(agent)["atrium-memory"] as! [String: Any]
+        precondition(followedEntry["command"] as? String == elsewhere.path && followedEntry["args"] as? [String] == ["mcp"])
+        precondition(followedEntry["env"] as? [String: String] == env)
+        let followedAgain = try MemoryTool.connectServer(agent, executable: elsewhere.path, vault: vault)
+        precondition(followedAgain == .unchanged)
 
         // An entry the user changed is left alone, even when its command is missing.
         try "{\"mcpServers\": {\"atrium-memory\": {\"command\": \"/opt/missing/wrapper\", \"args\": [\"mcp\", \"--actor\", \"me\"]}}}"
@@ -330,6 +338,114 @@ struct MemoryToolChecks {
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: mcpURL(agent).path)
         let unchanged = try Data(contentsOf: mcpURL(agent))
         precondition(unchanged == text, "an unreadable .mcp.json must be left unchanged")
+    }
+
+    static func read(_ url: URL) throws -> Data { try Data(contentsOf: url) }
+
+    /// The entry follows the current vault, and the app's deny rule and CLAUDE.md section move with it.
+    static func checkVaultSwitch(host: URL) throws {
+        let agent = try AgentEnvironment.create(name: "Switcher", purpose: "Test", host: host)
+        let vaultA = host.appendingPathComponent("SwitchVaultA")
+        let vaultB = host.appendingPathComponent("SwitchVaultB")
+        let exe = try makeExecutable(host: host, app: "Switch/ClaudeDesk.app")
+        let settingsURL = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        let claudeURL = URL(fileURLWithPath: agent.path).appendingPathComponent("CLAUDE.md")
+
+        // The user already had deny rules; the app's rule is added after them, and one more is added later.
+        try JSONSerialization.data(withJSONObject: ["permissions": ["deny": ["Bash(rm:*)"]]]).write(to: settingsURL)
+        _ = try MemoryTool.connect(agent, executable: exe, vault: vaultA, firstTime: true)
+        var s = try settings(agent)
+        var permissions = s["permissions"] as! [String: Any]
+        permissions["deny"] = (permissions["deny"] as! [String]) + ["Read(/secret/**)"]
+        s["permissions"] = permissions
+        try JSONSerialization.data(withJSONObject: s, options: [.prettyPrinted, .sortedKeys]).write(to: settingsURL)
+        precondition((permissions["deny"] as! [String]) == ["Bash(rm:*)", MemoryTool.vaultEditRule(vaultA), "Read(/secret/**)"])
+
+        let change = try MemoryTool.connect(agent, executable: exe, vault: vaultB, firstTime: false)
+        precondition(change == .repaired)
+        let entry = try servers(agent)["atrium-memory"] as! [String: Any]
+        let env = entry["env"] as! [String: String]
+        precondition(env["ATRIUM_MEMORY_PATH"] == vaultB.path && env["ATRIUM_MEMORY_ACTOR"] == "Switcher")
+        let deny = ((try settings(agent))["permissions"] as! [String: Any])["deny"] as! [String]
+        precondition(deny == ["Bash(rm:*)", MemoryTool.vaultEditRule(vaultB), "Read(/secret/**)"], "the rule moves in place: \(deny)")
+        let text = try String(contentsOf: claudeURL, encoding: .utf8)
+        precondition(text.contains(MemoryTool.instructionsSection(vault: vaultB)) && !text.contains(vaultA.path))
+        precondition(text.components(separatedBy: MemoryTool.instructionsMarker).count == 2)
+
+        // Again with B: nothing changes, byte for byte.
+        let mcpBefore = try read(mcpURL(agent)), settingsBefore = try read(settingsURL), claudeBefore = try read(claudeURL)
+        let second = try MemoryTool.connect(agent, executable: exe, vault: vaultB, firstTime: false)
+        precondition(second == .unchanged)
+        let mcpAfter = try read(mcpURL(agent)), settingsAfter = try read(settingsURL), claudeAfter = try read(claudeURL)
+        precondition(mcpBefore == mcpAfter && settingsBefore == settingsAfter && claudeBefore == claudeAfter)
+
+        // Extra env keys survive a switch back.
+        var extra = entry
+        extra["env"] = env.merging(["EXTRA": "1"]) { a, _ in a }
+        try writeConfig(agent, servers: ["atrium-memory": extra])
+        _ = try MemoryTool.connect(agent, executable: exe, vault: vaultA, firstTime: false)
+        let back = (try servers(agent)["atrium-memory"] as! [String: Any])["env"] as! [String: String]
+        precondition(back == ["ATRIUM_MEMORY_PATH": vaultA.path, "ATRIUM_MEMORY_ACTOR": "Switcher", "EXTRA": "1"])
+    }
+
+    /// A rule the user removed is not added back, and a section the user edited is not touched.
+    static func checkVaultSwitchUserEdits(host: URL) throws {
+        let agent = try AgentEnvironment.create(name: "Editor", purpose: "Test", host: host)
+        let vaultA = host.appendingPathComponent("EditVaultA")
+        let vaultB = host.appendingPathComponent("EditVaultB")
+        let exe = try makeExecutable(host: host, app: "EditSwitch/ClaudeDesk.app")
+        let settingsURL = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        let claudeURL = URL(fileURLWithPath: agent.path).appendingPathComponent("CLAUDE.md")
+        _ = try MemoryTool.connect(agent, executable: exe, vault: vaultA, firstTime: true)
+
+        var s = try settings(agent)
+        var permissions = s["permissions"] as! [String: Any]
+        permissions["deny"] = [String]()
+        s["permissions"] = permissions
+        try JSONSerialization.data(withJSONObject: s, options: [.prettyPrinted, .sortedKeys]).write(to: settingsURL)
+        let edited = try String(contentsOf: claudeURL, encoding: .utf8).replacingOccurrences(of: "Use them instead", with: "Prefer them over")
+        try edited.write(to: claudeURL, atomically: true, encoding: .utf8)
+        let settingsBefore = try read(settingsURL), claudeBefore = try read(claudeURL)
+
+        let change = try MemoryTool.connect(agent, executable: exe, vault: vaultB, firstTime: false)
+        precondition(change == .repaired)
+        let entry = try servers(agent)["atrium-memory"] as! [String: Any]
+        precondition((entry["env"] as! [String: String])["ATRIUM_MEMORY_PATH"] == vaultB.path)
+        let settingsAfter = try read(settingsURL), claudeAfter = try read(claudeURL)
+        precondition(settingsAfter == settingsBefore, "no B deny rule is added when the user removed the A rule")
+        precondition(claudeAfter == claudeBefore, "an edited section is left untouched")
+
+        // Unusable settings are reported, nothing is written, and the entry stays on the old vault so a retry can finish.
+        let broken = try AgentEnvironment.create(name: "Broken", purpose: "Test", host: host)
+        let brokenSettings = URL(fileURLWithPath: broken.path).appendingPathComponent(".claude/settings.local.json")
+        _ = try MemoryTool.connect(broken, executable: exe, vault: vaultA, firstTime: true)
+        try "not JSON".write(to: brokenSettings, atomically: true, encoding: .utf8)
+        let mcpBefore = try read(mcpURL(broken))
+        do {
+            _ = try MemoryTool.connect(broken, executable: exe, vault: vaultB, firstTime: false)
+            fatalError("unusable settings should be reported")
+        } catch is AgentEnvironment.Failure {}
+        let brokenAfter = try String(contentsOf: brokenSettings, encoding: .utf8)
+        let mcpAfter = try read(mcpURL(broken))
+        precondition(brokenAfter == "not JSON" && mcpAfter == mcpBefore)
+    }
+
+    /// An entry the user changed is never touched by a switch, and neither are its files.
+    static func checkVaultSwitchForeignEntry(host: URL) throws {
+        let agent = try AgentEnvironment.create(name: "Foreign", purpose: "Test", host: host)
+        let vaultA = host.appendingPathComponent("ForeignVaultA")
+        let vaultB = host.appendingPathComponent("ForeignVaultB")
+        let exe = try makeExecutable(host: host, app: "Foreign/ClaudeDesk.app")
+        let custom: [String: Any] = ["command": exe.path, "args": ["mcp", "--read-only"],
+                                     "env": ["ATRIUM_MEMORY_PATH": vaultA.path, "ATRIUM_MEMORY_ACTOR": "me"]]
+        try writeConfig(agent, servers: ["atrium-memory": custom])
+        let settingsURL = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        try JSONSerialization.data(withJSONObject: ["permissions": ["deny": [MemoryTool.vaultEditRule(vaultA)]]]).write(to: settingsURL)
+        let mcpBefore = try read(mcpURL(agent)), settingsBefore = try read(settingsURL)
+        let change = try MemoryTool.connect(agent, executable: exe, vault: vaultB, firstTime: false)
+        precondition(change == .unchanged)
+        let mcpAfter = try read(mcpURL(agent)), settingsAfter = try read(settingsURL)
+        precondition(mcpBefore == mcpAfter && settingsBefore == settingsAfter)
     }
 
     static func checkRunnerArguments(host: URL) throws {

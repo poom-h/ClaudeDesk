@@ -26,8 +26,9 @@ enum MemoryTool {
 
     enum Change: Equatable { case added, repaired, unchanged }
 
-    /// Makes sure the agent's .mcp.json has the atrium-memory server. Adds it when missing. When the app wrote it and
-    /// its command no longer exists (the app was moved), points it at `executable`. Anything else is left as it is.
+    /// Makes sure the agent's .mcp.json has the atrium-memory server. Adds it when missing. An entry the app wrote
+    /// always follows the running app and the current vault: its command becomes `executable` and its
+    /// ATRIUM_MEMORY_PATH becomes `vault`, whichever differs; every other key is kept. Any other entry is left as it is.
     @discardableResult
     static func connectServer(_ agent: AgentProfile, executable: String, vault: URL) throws -> Change {
         let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".mcp.json")
@@ -44,10 +45,12 @@ enum MemoryTool {
         }
         let change: Change
         if let existing = servers[serverName] {
-            guard var entry = existing as? [String: Any], isAppWritten(entry),
-                  let command = entry["command"] as? String, command != executable,
-                  !FileManager.default.fileExists(atPath: command) else { return .unchanged }
+            guard var entry = existing as? [String: Any], isAppWritten(entry) else { return .unchanged }
+            var env = entry["env"] as? [String: Any] ?? [:]
+            guard entry["command"] as? String != executable || env["ATRIUM_MEMORY_PATH"] as? String != vault.path else { return .unchanged }
             entry["command"] = executable
+            env["ATRIUM_MEMORY_PATH"] = vault.path
+            entry["env"] = env
             servers[serverName] = entry
             change = .repaired
         } else {
@@ -63,6 +66,19 @@ enum MemoryTool {
     /// An entry the app wrote: run as `<…>/atrium-memory mcp`. Entries the user changed don't match, so they're never touched.
     static func isAppWritten(_ entry: [String: Any]) -> Bool {
         (entry["args"] as? [String]) == ["mcp"] && ((entry["command"] as? String)?.hasSuffix("/" + serverName) ?? false)
+    }
+
+    /// The vault an app-written entry points at, or nil when there is no such entry (or the file is unusable;
+    /// connectServer reports that). A read error propagates.
+    static func appWrittenVault(_ agent: AgentProfile) throws -> String? {
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".mcp.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let data = try Data(contentsOf: url)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let servers = object["mcpServers"] as? [String: Any],
+              let entry = servers[serverName] as? [String: Any], isAppWritten(entry),
+              let env = entry["env"] as? [String: Any] else { return nil }
+        return env["ATRIUM_MEMORY_PATH"] as? String
     }
 
     /// Whether the agent's .mcp.json lists the atrium-memory server.
@@ -139,10 +155,55 @@ enum MemoryTool {
         try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    /// Connects an agent. The server entry is checked every time, so a moved app is repaired. Settings and
-    /// instructions are added only the first time, so the user's later edits to those files are respected.
+    /// Moves the deny rule the app added for `old` to `new`, in the same position. If the user removed the old rule,
+    /// nothing is added. Nothing is written when nothing changes.
+    static func migrateSettings(_ agent: AgentProfile, from old: URL, to new: URL) throws {
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let data = try Data(contentsOf: url)
+        guard var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AgentEnvironment.Failure(message: "\(agent.name)'s .claude/settings.local.json is not a JSON object, so the edit rule was not moved to the new vault.")
+        }
+        guard let rawPermissions = settings["permissions"] else { return }
+        guard var permissions = rawPermissions as? [String: Any] else {
+            throw AgentEnvironment.Failure(message: "\(agent.name)'s .claude/settings.local.json has a permissions value that is not an object, so the edit rule was not moved to the new vault.")
+        }
+        guard let rawDeny = permissions["deny"] else { return }
+        guard var deny = rawDeny as? [String] else {
+            throw AgentEnvironment.Failure(message: "\(agent.name)'s .claude/settings.local.json has a permission list that is not a list of strings, so the edit rule was not moved to the new vault.")
+        }
+        let oldRule = vaultEditRule(old), newRule = vaultEditRule(new)
+        guard let index = deny.firstIndex(of: oldRule) else { return }
+        if deny.contains(newRule) { deny.remove(at: index) } else { deny[index] = newRule }
+        permissions["deny"] = deny
+        settings["permissions"] = permissions
+        try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            .write(to: url, options: .atomic)
+    }
+
+    /// Swaps the section the app wrote for `old` with the one for `new`. A section the user edited is left alone.
+    static func migrateInstructions(_ agent: AgentProfile, from old: URL, to new: URL) throws {
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent("CLAUDE.md")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let oldSection = instructionsSection(vault: old)
+        guard let range = text.range(of: oldSection) else { return }
+        try text.replacingCharacters(in: range, with: instructionsSection(vault: new))
+            .write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Connects an agent. The server entry is checked every time, so a moved app or a changed workspace is followed;
+    /// when the vault changed, the deny rule and CLAUDE.md section the app added for the old vault move too. Settings
+    /// and instructions are otherwise added only the first time, so the user's later edits are respected.
+    /// The migration runs before the entry is rewritten: if it fails, the entry still names the old vault and the
+    /// next launch tries again (the migration is safe to repeat).
     @discardableResult
     static func connect(_ agent: AgentProfile, executable: URL, vault: URL, firstTime: Bool) throws -> Change {
+        if let previous = try appWrittenVault(agent), previous != vault.path {
+            let old = URL(fileURLWithPath: previous)
+            try migrateSettings(agent, from: old, to: vault)
+            try migrateInstructions(agent, from: old, to: vault)
+        }
         let change = try connectServer(agent, executable: executable.path, vault: vault)
         if firstTime {
             try connectSettings(agent, vault: vault)

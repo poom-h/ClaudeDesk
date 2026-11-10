@@ -118,13 +118,14 @@ extension DeskStore {
             } catch { problems.append("\(agent.name): \(error.localizedDescription)") }
         }
         UserDefaults.standard.set(Array(widgetConnected), forKey: widgetKey)
-        // atrium-memory arrived in 3.8.0. The server entry is checked on every launch, so a moved app is repaired.
+        // atrium-memory arrived in 3.8.0. The server entry is checked on every launch, so it follows a moved app and a changed workspace.
         // Settings and instructions are added once per agent, so later edits to those files are respected.
+        // An agent whose folder is gone is skipped.
         if let executable = MemoryTool.bundledExecutable {
             let memoryKey = "workspaceConnectedAgents.memory.v1"
             var memoryConnected = Set(UserDefaults.standard.stringArray(forKey: memoryKey) ?? [])
             let vault = Workspace.vault(in: workspace)
-            for agent in agents {
+            for agent in agents where FileManager.default.fileExists(atPath: agent.path) {
                 do {
                     let firstTime = !memoryConnected.contains(agent.id.uuidString)
                     let change = try MemoryTool.connect(agent, executable: executable, vault: vault, firstTime: firstTime)
