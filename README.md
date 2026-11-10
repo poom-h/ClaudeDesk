@@ -68,7 +68,7 @@ Configuration behavior follows the official [Claude settings documentation](http
 
 ## Development and verification
 
-Building needs the Xcode command line tools and Go. The bundled atrium-memory is built from a checkout at `../brainvault` (or `ATRIUM_MEMORY_SRC`); without one, the pinned release in `Resources/atrium-memory.version` is downloaded from GitHub and checked against its checksums.
+Building needs the Xcode command line tools. The bundled atrium-memory is built with Go from a checkout at `../brainvault` (or `ATRIUM_MEMORY_SRC`) when one exists; otherwise the pinned release in `Resources/atrium-memory.version` is downloaded from GitHub and checked against its checksums.
 
 ```sh
 bash scripts/build-app.sh
@@ -199,7 +199,7 @@ By default mail and calendar come from **this Mac** (Apple Mail and macOS calend
 
 Agents now reach the Memory Vault through **atrium-memory**, an MCP server built into ClaudeDesk (`Contents/MacOS/atrium-memory`; source: github.com/poom-h/atrium-memory). On launch, every agent gets it in its `.mcp.json`, approved in its local settings, and granted to routines and Cockpit runs, and a "Memory Vault tools" section in its CLAUDE.md. Agents search and follow maps with `vault_search` and `vault_read`, and change notes with `vault_edit`, `vault_append` and `vault_write`. Edits and whole-note replacements are checked against the version the agent last read (creating a note or appending doesn't need one); every change is written all at once and logged to `MemoryVault/.atrium-memory/audit.jsonl` without note content.
 
-Claude's file-editing tools are blocked inside the vault for agents (an `Edit` deny rule), so they change it through the vault tools; reading files and running the vault checker still work. Shell commands and scripts could still write files, so this is a guardrail, not a lock. Moving or reinstalling ClaudeDesk.app is fine: each launch points every agent's entry at the running app's copy, and changing the workspace moves agents to the new vault (with their edit rule and instructions). Your own entries and other servers are never changed. To use the same tools in your own Claude sessions, Settings › General › Copy MCP config.
+Claude's file-editing tools are blocked inside the vault for agents (an `Edit` deny rule), so they change it through the vault tools; reading files and running the vault checker still work. Shell commands and scripts could still write files, so this is a guardrail, not a lock. Moving or reinstalling ClaudeDesk.app is fine: each launch points every agent's entry at the running app's copy, and changing the workspace points agents' entries at the new vault (with their edit rule and instructions). Your own entries and other servers are never changed. To use the same tools in your own Claude sessions, Settings › General › Copy MCP config.
 
 The Cockpit's memory flare now follows the audit log, labelled with the agent's name, with the transcript scan kept as a fallback.
 
