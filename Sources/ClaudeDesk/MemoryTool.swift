@@ -33,7 +33,8 @@ enum MemoryTool {
         let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".mcp.json")
         var config: [String: Any] = [:]
         if FileManager.default.fileExists(atPath: url.path) {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            let data = try Data(contentsOf: url)
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw AgentEnvironment.Failure(message: "\(agent.name)'s .mcp.json is not a JSON object, so the Memory Vault tools were not added.")
             }
             config = object
