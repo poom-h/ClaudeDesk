@@ -68,6 +68,8 @@ Configuration behavior follows the official [Claude settings documentation](http
 
 ## Development and verification
 
+Building needs the Xcode command line tools and Go. The bundled atrium-memory is built from a checkout at `../brainvault` (or `ATRIUM_MEMORY_SRC`); without one, the pinned release in `Resources/atrium-memory.version` is downloaded from GitHub and checked against its checksums.
+
 ```sh
 bash scripts/build-app.sh
 bash scripts/test.sh
@@ -137,7 +139,7 @@ The activity log (`logs/YYYY-MM.jsonl`) records conversations, Inbox decisions, 
 
 Scheduled work for agents is defined in `<workspace>/routines/routines.md`: one `##` section per routine with `agent`, `schedule` (`daily 08:30`, `weekdays 08:30`, `mondays 09:00`, `every 6h`, `hourly`), optional `skill`, `max_turns`, `timeout`, `enabled`, `tools: web-fetch`, `output`, then the prompt. Agents can edit the file. A new routine, or one changed to a different agent, more often than hourly, above the default limits (30 turns, 15 minutes), or with extra tools, pauses and asks for approval in the Inbox. Prompt and time-of-day edits apply immediately.
 
-**Run routines in the background** (Settings or the clock button's Routines sheet) installs a LaunchAgent that runs `claudedesk-runner` every 5 minutes while the Mac is awake; it is off by default. Missed times run once after waking. Each run is `claude -p` in the agent's folder with its private profile, in the default permission mode with prompts disabled. Only reading, searching, `WebSearch`, skills, edits inside the agent's folder and its allowed directories, and the vault checker are allowed. `WebFetch` requires `tools: web-fetch`. Runs are capped at 20 a day. Approvals, state, the queue, run outputs, and the runner log live in `<workspace>/.claudedesk/`, outside agents' reach.
+**Run routines in the background** (Settings or the clock button's Routines sheet) installs a LaunchAgent that runs `claudedesk-runner` every 5 minutes while the Mac is awake; it is off by default. Missed times run once after waking. Each run is `claude -p` in the agent's folder with its private profile, in the default permission mode with prompts disabled. Only reading, searching, `WebSearch`, skills, edits inside the agent's folder and its allowed directories, and the vault checker are allowed. `WebFetch` requires `tools: web-fetch`. Runs are capped at 20 a day. For agents connected to atrium-memory, the vault folder is the exception: runs get the `mcp__atrium-memory` tools there instead of `Edit`, and `--disallowedTools` blocks direct edits. Approvals, state, the queue, run outputs, and the runner log live in `<workspace>/.claudedesk/`, outside agents' reach.
 
 The Inbox adds `routine` (approve to switch a routine on), `memory` (append proposed text to an agent's `MEMORY.md`), and `alert` (failures, limits, invalid routines; shown first) items, plus a `run-routine` callback. Notifications appear only when a run fails, hits a limit, or files an inbox item.
 
@@ -195,9 +197,9 @@ By default mail and calendar come from **this Mac** (Apple Mail and macOS calend
 
 ## Version 3.8 · Memory Vault tools
 
-Agents now reach the Memory Vault through **atrium-memory**, an MCP server built into ClaudeDesk (`Contents/MacOS/atrium-memory`; source: github.com/poom-h/atrium-memory). On launch, every agent gets it in its `.mcp.json`, approved in its local settings so routines and Cockpit runs can use it too, and a "Memory Vault tools" section in its CLAUDE.md. Agents search and follow maps with `vault_search` and `vault_read`, and change notes with `vault_edit`, `vault_append` and `vault_write`. Every change is checked against the version the agent last read, written all at once, and logged to `MemoryVault/.atrium-memory/audit.jsonl` without note content.
+Agents now reach the Memory Vault through **atrium-memory**, an MCP server built into ClaudeDesk (`Contents/MacOS/atrium-memory`; source: github.com/poom-h/atrium-memory). On launch, every agent gets it in its `.mcp.json`, approved in its local settings, and granted to routines and Cockpit runs, and a "Memory Vault tools" section in its CLAUDE.md. Agents search and follow maps with `vault_search` and `vault_read`, and change notes with `vault_edit`, `vault_append` and `vault_write`. Edits and whole-note replacements are checked against the version the agent last read (creating a note or appending doesn't need one); every change is written all at once and logged to `MemoryVault/.atrium-memory/audit.jsonl` without note content.
 
-Direct file edits inside the vault are blocked for agents (an `Edit` deny rule), so the tools are the only way to change it; reading files and running the vault checker still work. Moving ClaudeDesk.app is fine: the next launch repoints every agent's entry. Your own entries and other servers are never changed. To use the same tools in your own Claude sessions, Settings › General › Copy MCP config.
+Claude's file-editing tools are blocked inside the vault for agents (an `Edit` deny rule), so they change it through the vault tools; reading files and running the vault checker still work. Shell commands and scripts could still write files, so this is a guardrail, not a lock. Moving or reinstalling ClaudeDesk.app is fine: each launch points every agent's entry at the running app's copy, and changing the workspace moves agents to the new vault (with their edit rule and instructions). Your own entries and other servers are never changed. To use the same tools in your own Claude sessions, Settings › General › Copy MCP config.
 
 The Cockpit's memory flare now follows the audit log, labelled with the agent's name, with the transcript scan kept as a fallback.
 

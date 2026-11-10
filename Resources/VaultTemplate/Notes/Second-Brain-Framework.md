@@ -87,7 +87,7 @@ For a request to save knowledge:
 3. Preserve the source URL, author, date, or supplied provenance when available. Distinguish direct quotations, source summaries, the user's experience, and the agent's inference. Never invent citations or missing facts.
 4. Choose a suitable note format. Use existing type and topic names before creating synonyms. Do not force an uncertain capture into a category; Inbox is a valid destination.
 5. Write a clear title and useful content. Preserve code, commands, prerequisites, and limitations accurately. Mark unknown or unverified details explicitly.
-6. Add the note to the right map, creating a sub-map only when the rules above call for one. Link relevant existing notes when the relationship is meaningful, and explain the relationship. Save through the `vault_*` tools: `vault_write` to create a note, `vault_edit` or `vault_append` to change one, always passing the `version` from your last `vault_read`.
+6. Add the note to the right map, creating a sub-map only when the rules above call for one. Link relevant existing notes when the relationship is meaningful, and explain the relationship. Save through the `vault_*` tools: `vault_write` to create a note, `vault_edit` or `vault_append` to change one, passing the `version` from your last `vault_read` when you edit or replace (creating a note takes no version).
 7. Run the vault checker and fix any problem the change caused.
 8. Report briefly what was saved or updated and link to the note. Mention unresolved gaps or conflicts.
 

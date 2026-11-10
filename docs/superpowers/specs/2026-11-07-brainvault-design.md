@@ -163,7 +163,7 @@ Users install one app. The tool ships inside it; nothing is installed separately
    }
    ```
 
-   Because the command points into the app bundle, moving the app would break it. An entry the app wrote (`args == ["mcp"]` and a command ending in `/atrium-memory`) whose command no longer exists gets the current bundled path. Any other entry is left alone.
+   An entry the app wrote (`args == ["mcp"]` and a command ending in `/atrium-memory`) always follows the running app and the current vault. Each launch sets its command to the bundled binary and its `ATRIUM_MEMORY_PATH` to the workspace's vault. When the vault changes, the app's deny rule and its `CLAUDE.md` section move with it, unless the user changed them. Any other entry is left alone.
 3. **Approval.** Claude Code asks before using a server from a project `.mcp.json`, and background runs have no prompts. Once per agent, the app adds to `.claude/settings.local.json`:
    - `"atrium-memory"` to `enabledMcpjsonServers`;
    - `"mcp__atrium-memory"` to `permissions.allow`.
