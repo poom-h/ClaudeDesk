@@ -84,7 +84,16 @@ extension DeskStore {
         let notes = Set(vaultGraph.nodes.map(\.id))
         let transcripts = VaultActivity.recentTranscripts(of: agents, now: now)
         let owners = Dictionary(transcripts.map { ($0.1.path, $0.0.name) }, uniquingKeysWith: { first, _ in first })
-        for (file, line) in vaultTail.newLines(in: transcripts.map(\.1), now: now) where line.contains(vault.lastPathComponent) {
+        let audit = VaultActivity.auditLog(in: vault)
+        let files = transcripts.map(\.1) + (FileManager.default.fileExists(atPath: audit.path) ? [audit] : [])
+        for (file, line) in vaultTail.newLines(in: files, now: now) {
+            if file.path == audit.path {
+                if let seen = VaultActivity.auditReads(in: line) {
+                    for note in seen.notes where notes.contains(note) { reads[note] = VaultRead(date: now, agent: seen.actor) }
+                }
+                continue
+            }
+            guard line.contains(vault.lastPathComponent) else { continue }
             for note in VaultActivity.notes(in: line, vaultPaths: roots) where notes.contains(note) {
                 reads[note] = VaultRead(date: now, agent: owners[file.path] ?? "")
             }

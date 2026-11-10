@@ -14,7 +14,8 @@ struct MemoryToolChecks {
         try checkSettingsEdgeCases(host: host)
         try checkInstructionsSafety(host: host)
         try checkRunnerArguments(host: host)
-        print("Passed: atrium-memory server entry, settings approval and edit block, instructions, project config, runner arguments.")
+        try checkAuditFlare(host: host)
+        print("Passed: atrium-memory server entry, settings approval and edit block, instructions, project config, runner arguments, audit flare.")
     }
 
     /// A fake bundled binary at <host>/<app>/Contents/MacOS/atrium-memory.
@@ -363,5 +364,37 @@ struct MemoryToolChecks {
         // Without a vault (older callers), nothing changes for connected agents either.
         let noVault = RoutineRunner.arguments(for: routine, agent: agent, runID: "r3", prompt: "go")
         precondition(!noVault.contains("mcp__atrium-memory") && !noVault.contains("--disallowedTools"))
+    }
+
+    static func checkAuditFlare(host: URL) throws {
+        let read = VaultActivity.auditReads(in: #"{"time":"2026-11-10T09:00:00Z","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#)
+        precondition(read?.actor == "Atlas" && read?.notes == ["Notes/A.md"])
+        let search = VaultActivity.auditReads(in: #"{"actor":"Scout","tool":"vault_search","query":"aws","results":["Notes/A.md","Maps/Tech.md"],"outcome":"ok"}"#)
+        precondition(search?.actor == "Scout" && search?.notes == ["Notes/A.md", "Maps/Tech.md"])
+        for ignored in [
+            #"{"actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"not_found"}"#,
+            #"{"actor":"Atlas","tool":"vault_write","id":"Notes/A.md","outcome":"ok"}"#,
+            #"{"actor":"Atlas","tool":"vault_search","outcome":"ok"}"#,
+            "not json", ""
+        ] {
+            let result = VaultActivity.auditReads(in: ignored)
+            precondition(result == nil || result!.notes.isEmpty, "should light nothing: \(ignored)")
+        }
+        let vault = host.appendingPathComponent("FlareVault")
+        precondition(VaultActivity.auditLog(in: vault).path == vault.path + "/.atrium-memory/audit.jsonl")
+
+        // A freshly created audit file is followed from the start, and appended lines arrive on the next call.
+        let log = VaultActivity.auditLog(in: vault)
+        try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (#"{"actor":"Atlas","tool":"vault_read","id":"Home.md","outcome":"ok"}"# + "\n").write(to: log, atomically: true, encoding: .utf8)
+        let tail = VaultActivity.Tail()
+        let first = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1) }
+        precondition(first.map(\.notes) == [["Home.md"]])
+        let handle = try FileHandle(forWritingTo: log)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((#"{"actor":"Atlas","tool":"vault_read","id":"Notes/B.md","outcome":"ok"}"# + "\n").utf8))
+        try handle.close()
+        let second = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1) }
+        precondition(second.map(\.notes) == [["Notes/B.md"]])
     }
 }

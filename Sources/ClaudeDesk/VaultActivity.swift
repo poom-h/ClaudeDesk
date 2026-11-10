@@ -6,8 +6,8 @@ struct VaultRead: Equatable {
     var agent: String
 }
 
-/// Finds which Memory Vault notes agents read or search, by following their transcripts as they grow.
-/// Reads, search results, edits, and shell commands all put the note's full path in a transcript line.
+/// Finds which Memory Vault notes agents read or search: from atrium-memory's audit log, and, as a fallback, by
+/// following their transcripts as they grow (direct reads and `@` imports put the note's full path in a transcript line).
 enum VaultActivity {
     /// Vault-relative note paths (such as `Notes/LangGraph basics.md`) that appear in one transcript line.
     static func notes(in line: String, vaultPaths: [String]) -> [String] {
@@ -28,6 +28,23 @@ enum VaultActivity {
             }
         }
         return found
+    }
+
+    /// atrium-memory's call log inside the vault.
+    static func auditLog(in vault: URL) -> URL {
+        vault.appendingPathComponent(".atrium-memory/audit.jsonl")
+    }
+
+    /// Notes one atrium-memory audit line shows an agent looking at: the note of a successful `vault_read`, or the
+    /// results of a successful `vault_search`, with the caller's name. Nil for other tools, failures, and other lines.
+    static func auditReads(in line: String) -> (actor: String, notes: [String])? {
+        struct Entry: Decodable { var actor: String?; var tool: String?; var id: String?; var results: [String]?; var outcome: String? }
+        guard let entry = try? JSONDecoder().decode(Entry.self, from: Data(line.utf8)), entry.outcome == "ok" else { return nil }
+        switch entry.tool {
+        case "vault_read": return entry.id.map { (actor: entry.actor ?? "", notes: [$0]) }
+        case "vault_search": return (actor: entry.actor ?? "", notes: entry.results ?? [])
+        default: return nil
+        }
     }
 
     /// Follows transcript files, returning only lines added since the last call. A file seen for the first time is
