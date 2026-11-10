@@ -13,7 +13,7 @@ if [[ ! -f .build/SwiftTerm/libSwiftTerm.a ]] || find Vendor/SwiftTerm/Sources/S
 fi
 swiftc -O -parse-as-library -module-name ClaudeDesk -target "$(uname -m)-apple-macosx14.0" \
     "${COMPILER_FLAGS[@]}" -I .build/SwiftTerm -L .build/SwiftTerm -lSwiftTerm Sources/ClaudeDesk/*.swift -o .build/release/ClaudeDesk
-RUNNER_SOURCES=(Sources/ClaudeDesk/Models.swift Sources/ClaudeDesk/AgentEnvironment.swift Sources/ClaudeDesk/Workspace.swift
+RUNNER_SOURCES=(Sources/ClaudeDesk/Models.swift Sources/ClaudeDesk/AgentEnvironment.swift Sources/ClaudeDesk/MemoryTool.swift Sources/ClaudeDesk/Workspace.swift
     Sources/ClaudeDesk/Frontmatter.swift Sources/ClaudeDesk/ActivityLog.swift Sources/ClaudeDesk/SkillLibrary.swift
     Sources/ClaudeDesk/Inbox.swift Sources/ClaudeDesk/Routines.swift Sources/ClaudeDesk/RoutineRunner.swift Sources/ClaudeDesk/RunSteps.swift Sources/ClaudeDesk/CockpitData.swift Runner/main.swift)
 swiftc -O -module-name ClaudeDeskRunner -target "$(uname -m)-apple-macosx14.0" "${COMPILER_FLAGS[@]}" \
