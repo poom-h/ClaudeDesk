@@ -74,7 +74,7 @@ extension DeskStore {
         refreshVaultReads()
     }
 
-    /// Lights up notes agents read or search: new lines in their transcripts that mention a vault note.
+    /// Lights up notes agents read or search: new lines in atrium-memory's audit log, and in their transcripts, that mention a vault note.
     func refreshVaultReads() {
         guard let workspace = workspaceURL else { return }
         let vault = Workspace.vault(in: workspace)
@@ -88,8 +88,8 @@ extension DeskStore {
         let files = transcripts.map(\.1) + (FileManager.default.fileExists(atPath: audit.path) ? [audit] : [])
         for (file, line) in vaultTail.newLines(in: files, now: now) {
             if file.path == audit.path {
-                if let seen = VaultActivity.auditReads(in: line) {
-                    for note in seen.notes where notes.contains(note) { reads[note] = VaultRead(date: now, agent: seen.actor) }
+                if let seen = VaultActivity.auditReads(in: line, now: now) {
+                    for id in VaultActivity.graphIDs(for: seen.notes, in: notes) { reads[id] = VaultRead(date: now, agent: seen.actor) }
                 }
                 continue
             }

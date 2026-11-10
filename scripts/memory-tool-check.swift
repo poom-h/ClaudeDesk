@@ -367,34 +367,59 @@ struct MemoryToolChecks {
     }
 
     static func checkAuditFlare(host: URL) throws {
-        let read = VaultActivity.auditReads(in: #"{"time":"2026-11-10T09:00:00Z","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#)
+        let now = Date()
+        let stamp = ISO8601DateFormatter().string(from: now)                  // 2026-11-10T09:00:00Z
+        let nanos = String(stamp.dropLast()) + ".123456789Z"                  // as atrium-memory writes it
+        let old = ISO8601DateFormatter().string(from: now.addingTimeInterval(-60))
+        let future = ISO8601DateFormatter().string(from: now.addingTimeInterval(60))
+
+        let read = VaultActivity.auditReads(in: #"{"time":"\#(stamp)","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#, now: now)
         precondition(read?.actor == "Atlas" && read?.notes == ["Notes/A.md"])
-        let search = VaultActivity.auditReads(in: #"{"actor":"Scout","tool":"vault_search","query":"aws","results":["Notes/A.md","Maps/Tech.md"],"outcome":"ok"}"#)
+        let fractional = VaultActivity.auditReads(in: #"{"time":"\#(nanos)","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#, now: now)
+        precondition(fractional?.notes == ["Notes/A.md"], "nanosecond timestamps must parse")
+        let search = VaultActivity.auditReads(in: #"{"time":"\#(stamp)","actor":"Scout","tool":"vault_search","query":"aws","results":["Notes/A.md","Maps/Tech.md"],"outcome":"ok"}"#, now: now)
         precondition(search?.actor == "Scout" && search?.notes == ["Notes/A.md", "Maps/Tech.md"])
         for ignored in [
-            #"{"actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"not_found"}"#,
-            #"{"actor":"Atlas","tool":"vault_write","id":"Notes/A.md","outcome":"ok"}"#,
-            #"{"actor":"Atlas","tool":"vault_search","outcome":"ok"}"#,
+            #"{"time":"\#(stamp)","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"not_found"}"#,
+            #"{"time":"\#(stamp)","actor":"Atlas","tool":"vault_write","id":"Notes/A.md","outcome":"ok"}"#,
+            #"{"time":"\#(stamp)","actor":"Atlas","tool":"vault_search","outcome":"ok"}"#,
+            #"{"time":"\#(old)","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#,
+            #"{"time":"\#(future)","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#,
+            #"{"actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#,
+            #"{"time":"yesterday","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#,
             "not json", ""
         ] {
-            let result = VaultActivity.auditReads(in: ignored)
+            let result = VaultActivity.auditReads(in: ignored, now: now)
             precondition(result == nil || result!.notes.isEmpty, "should light nothing: \(ignored)")
         }
+        precondition(VaultActivity.auditReads(in: #"{"time":"\#(old)","actor":"Atlas","tool":"vault_read","id":"Notes/A.md","outcome":"ok"}"#, now: now) == nil, "a 60 second old line is history, not a read")
+
         let vault = host.appendingPathComponent("FlareVault")
         precondition(VaultActivity.auditLog(in: vault).path == vault.path + "/.atrium-memory/audit.jsonl")
 
-        // A freshly created audit file is followed from the start, and appended lines arrive on the next call.
+        // An audit file that already holds old lines lights nothing; lines appended afterwards do.
         let log = VaultActivity.auditLog(in: vault)
         try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try (#"{"actor":"Atlas","tool":"vault_read","id":"Home.md","outcome":"ok"}"# + "\n").write(to: log, atomically: true, encoding: .utf8)
+        try (#"{"time":"\#(old)","actor":"Atlas","tool":"vault_read","id":"Old.md","outcome":"ok"}"# + "\n").write(to: log, atomically: true, encoding: .utf8)
         let tail = VaultActivity.Tail()
-        let first = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1) }
-        precondition(first.map(\.notes) == [["Home.md"]])
+        let replayed = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1, now: now) }
+        precondition(replayed.isEmpty, "old audit lines in a new file must not light notes")
         let handle = try FileHandle(forWritingTo: log)
         try handle.seekToEnd()
-        try handle.write(contentsOf: Data((#"{"actor":"Atlas","tool":"vault_read","id":"Notes/B.md","outcome":"ok"}"# + "\n").utf8))
+        try handle.write(contentsOf: Data((#"{"time":"\#(stamp)","actor":"Atlas","tool":"vault_read","id":"Home.md","outcome":"ok"}"# + "\n").utf8))
         try handle.close()
-        let second = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1) }
+        let first = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1, now: now) }
+        precondition(first.map(\.notes) == [["Home.md"]])
+        let again = try FileHandle(forWritingTo: log)
+        try again.seekToEnd()
+        try again.write(contentsOf: Data((#"{"time":"\#(stamp)","actor":"Atlas","tool":"vault_read","id":"Notes/B.md","outcome":"ok"}"# + "\n").utf8))
+        try again.close()
+        let second = tail.newLines(in: [log]).compactMap { VaultActivity.auditReads(in: $0.1, now: now) }
         precondition(second.map(\.notes) == [["Notes/B.md"]])
+
+        // Graph IDs may be decomposed on disk while audit notes are composed. The read lands on the graph's own ID.
+        let graph: Set<String> = ["Notes/Caf\u{0065}\u{0301}.md", "Notes/Plain.md"]
+        let matched = VaultActivity.graphIDs(for: ["Notes/Caf\u{00E9}.md", "Notes/Missing.md"], in: graph)
+        precondition(matched.count == 1 && matched[0].unicodeScalars.map(\.value) == "Notes/Caf\u{0065}\u{0301}.md".unicodeScalars.map(\.value), "an NFC note must return the NFD graph id")
     }
 }

@@ -37,15 +37,36 @@ enum VaultActivity {
 
     /// Notes one atrium-memory audit line shows an agent looking at: the note of a successful `vault_read`, or the
     /// results of a successful `vault_search`, with the caller's name. Nil for other tools, failures, and other lines.
-    static func auditReads(in line: String) -> (actor: String, notes: [String])? {
-        struct Entry: Decodable { var actor: String?; var tool: String?; var id: String?; var results: [String]?; var outcome: String? }
-        guard let entry = try? JSONDecoder().decode(Entry.self, from: Data(line.utf8)), entry.outcome == "ok" else { return nil }
+    static func auditReads(in line: String, now: Date = Date(), maxAge: TimeInterval = 10) -> (actor: String, notes: [String])? {
+        struct Entry: Decodable { var time: String?; var actor: String?; var tool: String?; var id: String?; var results: [String]?; var outcome: String? }
+        guard let entry = try? JSONDecoder().decode(Entry.self, from: Data(line.utf8)), entry.outcome == "ok",
+              let stamp = entry.time.flatMap(auditTime), abs(now.timeIntervalSince(stamp)) <= maxAge else { return nil }
         switch entry.tool {
         case "vault_read": return entry.id.map { (actor: entry.actor ?? "", notes: [$0]) }
         case "vault_search": return (actor: entry.actor ?? "", notes: entry.results ?? [])
         default: return nil
         }
     }
+
+    /// Graph IDs that match the audit notes, compared in NFC. Returns the graph's own IDs.
+    static func graphIDs(for notes: [String], in graph: Set<String>) -> [String] {
+        var byNFC: [String: String] = [:]
+        for id in graph { byNFC[id.precomposedStringWithCanonicalMapping] = id }
+        return notes.compactMap { byNFC[$0.precomposedStringWithCanonicalMapping] }
+    }
+
+    /// atrium-memory writes RFC 3339 UTC times, sometimes with nanoseconds. Only the whole seconds are read.
+    private static func auditTime(_ text: String) -> Date? {
+        guard text.hasSuffix("Z"), text.count >= 20 else { return nil }
+        return wholeSecondFormatter.date(from: String(text.prefix(19)) + "Z")
+    }
+
+    private static let wholeSecondFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter
+    }()
 
     /// Follows transcript files, returning only lines added since the last call. A file seen for the first time is
     /// read from the start only if it's brand new; older conversations aren't replayed.
