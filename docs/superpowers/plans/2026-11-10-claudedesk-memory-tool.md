@@ -571,8 +571,9 @@ In `main()`, add `try checkRunnerArguments(host: host)` after the other checks, 
         let after = RoutineRunner.arguments(for: routine, agent: agent, runID: "r2", prompt: "go", vault: vault)
         let separator = after.firstIndex(of: "--")!
         precondition(after.contains("mcp__atrium-memory") && after.firstIndex(of: "mcp__atrium-memory")! < separator)
-        precondition(!after.contains(vaultEdit), "connected agents must not be granted Edit on the vault")
+        let allowedStart = after.firstIndex(of: "--allowedTools")! + 1
         let disallowed = after.firstIndex(of: "--disallowedTools")!
+        precondition(!after[allowedStart..<disallowed].contains(vaultEdit), "connected agents must not be granted Edit on the vault")
         precondition(after[disallowed + 1] == vaultEdit && disallowed < separator)
         precondition(after.contains(checker), "the vault checker stays allowed")
         precondition(after.contains("Edit(/" + agent.path + "/**)"), "the agent's own folder stays editable")
