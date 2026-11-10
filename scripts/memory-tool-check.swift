@@ -10,7 +10,8 @@ struct MemoryToolChecks {
         try checkAdditive(host: host)
         try checkUnchangedPaths(host: host)
         try checkReadErrors(host: host)
-        print("Passed: atrium-memory server entry added, kept, repaired after a move, user entries left alone, invalid files reported.")
+        try checkSettingsAndInstructions(host: host)
+        print("Passed: atrium-memory server entry, settings approval and edit block, instructions, project config.")
     }
 
     /// A fake bundled binary at <host>/<app>/Contents/MacOS/atrium-memory.
@@ -97,6 +98,79 @@ struct MemoryToolChecks {
         try FileManager.default.removeItem(at: mcpURL(agent))
         let created = try MemoryTool.connectServer(agent, executable: moved.path, vault: vault)
         precondition(created == .added && MemoryTool.isConnected(agent))
+    }
+
+    static func settings(_ agent: AgentProfile) throws -> [String: Any] {
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        return try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    }
+
+    static func checkSettingsAndInstructions(host: URL) throws {
+        let agent = try AgentEnvironment.create(name: "Scout", purpose: "Find things", host: host)
+        let vault = host.appendingPathComponent("MemoryVault")
+        let exe = try makeExecutable(host: host, app: "Settings.app")
+        let settingsURL = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        let claudeURL = URL(fileURLWithPath: agent.path).appendingPathComponent("CLAUDE.md")
+
+        // Existing settings are kept; the three entries are added once.
+        let existing: [String: Any] = ["permissions": ["additionalDirectories": [vault.path], "allow": ["WebSearch"]], "model": "opus"]
+        try JSONSerialization.data(withJSONObject: existing).write(to: settingsURL)
+        try MemoryTool.connectSettings(agent, vault: vault)
+        try MemoryTool.connectSettings(agent, vault: vault)
+        let s = try settings(agent)
+        let permissions = s["permissions"] as! [String: Any]
+        precondition(s["model"] as? String == "opus")
+        precondition(s["enabledMcpjsonServers"] as? [String] == ["atrium-memory"])
+        precondition(permissions["allow"] as? [String] == ["WebSearch", "mcp__atrium-memory"])
+        precondition(permissions["deny"] as? [String] == ["Edit(/" + vault.path + "/**)"])
+        precondition(MemoryTool.vaultEditRule(vault).hasPrefix("Edit(//"))
+        precondition(permissions["additionalDirectories"] as? [String] == [vault.path])
+
+        // Settings that aren't usable are reported and not rewritten.
+        for invalid in ["not JSON", "{\"permissions\": {\"allow\": \"Read\"}}"] {
+            try invalid.write(to: settingsURL, atomically: true, encoding: .utf8)
+            do {
+                try MemoryTool.connectSettings(agent, vault: vault)
+                fatalError("unusable settings should be reported: \(invalid)")
+            } catch is AgentEnvironment.Failure {}
+            let unchanged = try String(contentsOf: settingsURL, encoding: .utf8)
+            precondition(unchanged == invalid)
+        }
+        try "{}".write(to: settingsURL, atomically: true, encoding: .utf8)
+
+        // The CLAUDE.md section is appended once, and the existing text is kept.
+        let before = try String(contentsOf: claudeURL, encoding: .utf8)
+        try MemoryTool.connectInstructions(agent, vault: vault)
+        try MemoryTool.connectInstructions(agent, vault: vault)
+        let text = try String(contentsOf: claudeURL, encoding: .utf8)
+        precondition(text.hasPrefix(before))
+        precondition(text.components(separatedBy: MemoryTool.instructionsMarker).count == 2, "section added exactly once")
+        for phrase in ["## Memory Vault tools", vault.path, "vault_read", "vault_search", "vault_edit", "stale_version", ".tools/vault_check.py"] {
+            precondition(text.contains(phrase), "instructions should mention \(phrase)")
+        }
+
+        // connect(firstTime: false) only checks the server entry.
+        let other = try AgentEnvironment.create(name: "Later", purpose: "x", host: host)
+        let otherSettings = URL(fileURLWithPath: other.path).appendingPathComponent(".claude/settings.local.json")
+        let otherClaude = URL(fileURLWithPath: other.path).appendingPathComponent("CLAUDE.md")
+        let settingsBefore = try String(contentsOf: otherSettings, encoding: .utf8)
+        let claudeBefore = try String(contentsOf: otherClaude, encoding: .utf8)
+        let change = try MemoryTool.connect(other, executable: exe, vault: vault, firstTime: false)
+        precondition(change == .added && MemoryTool.isConnected(other))
+        let settingsAfter = try String(contentsOf: otherSettings, encoding: .utf8)
+        let claudeAfter = try String(contentsOf: otherClaude, encoding: .utf8)
+        precondition(settingsAfter == settingsBefore && claudeAfter == claudeBefore)
+        _ = try MemoryTool.connect(other, executable: exe, vault: vault, firstTime: true)
+        let claudeConnected = try String(contentsOf: otherClaude, encoding: .utf8)
+        precondition(claudeConnected.contains(MemoryTool.instructionsMarker))
+        let otherSettingsConnected = try settings(other)
+        precondition(otherSettingsConnected["enabledMcpjsonServers"] as? [String] == ["atrium-memory"])
+
+        // The project config is the same entry, with actor "project".
+        let project = MemoryTool.projectConfig(executable: exe, vault: vault)
+        let parsed = try JSONSerialization.jsonObject(with: Data(project.utf8)) as! [String: Any]
+        let entry = (parsed["mcpServers"] as! [String: Any])["atrium-memory"] as! [String: Any]
+        precondition((entry["env"] as! [String: String])["ATRIUM_MEMORY_ACTOR"] == "project" && entry["command"] as? String == exe.path)
     }
 
     /// Canonical JSON bytes, so two values can be compared exactly.

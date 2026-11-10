@@ -73,4 +73,84 @@ enum MemoryTool {
               let servers = object["mcpServers"] as? [String: Any] else { return false }
         return servers[serverName] != nil
     }
+
+    /// Approves the server (Claude asks before using a project .mcp.json server, and background runs can't ask),
+    /// allows its tools, and blocks direct file edits inside the vault. Only adds; existing settings are kept.
+    static func connectSettings(_ agent: AgentProfile, vault: URL) throws {
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent(".claude/settings.local.json")
+        var settings: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: url)
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw AgentEnvironment.Failure(message: "\(agent.name)'s .claude/settings.local.json is not a JSON object, so the Memory Vault tools were not approved.")
+            }
+            settings = object
+        }
+        let original = NSDictionary(dictionary: settings)
+        guard settings["permissions"] == nil || settings["permissions"] is [String: Any] else {
+            throw AgentEnvironment.Failure(message: "\(agent.name)'s .claude/settings.local.json has a permissions value that is not an object, so the Memory Vault tools were not approved.")
+        }
+        var permissions = settings["permissions"] as? [String: Any] ?? [:]
+        settings["enabledMcpjsonServers"] = try adding(serverName, to: settings["enabledMcpjsonServers"], in: agent)
+        permissions["allow"] = try adding(toolPermission, to: permissions["allow"], in: agent)
+        permissions["deny"] = try adding(vaultEditRule(vault), to: permissions["deny"], in: agent)
+        settings["permissions"] = permissions
+        guard NSDictionary(dictionary: settings) != original else { return }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            .write(to: url, options: .atomic)
+    }
+
+    private static func adding(_ value: String, to list: Any?, in agent: AgentProfile) throws -> [String] {
+        guard list == nil || list is [String] else {
+            throw AgentEnvironment.Failure(message: "\(agent.name)'s .claude/settings.local.json has a permission list that is not a list of strings, so the Memory Vault tools were not approved.")
+        }
+        var items = list as? [String] ?? []
+        if !items.contains(value) { items.append(value) }
+        return items
+    }
+
+    static func instructionsSection(vault: URL) -> String {
+        """
+
+        ## Memory Vault tools
+        \(instructionsMarker)
+        The Memory Vault at `\(vault.path)` is reached through the `atrium-memory` tools, which are built into ClaudeDesk. Use them instead of reading or editing vault files directly; direct edits in the vault are blocked.
+        - Find notes: start from Home and follow the maps with `vault_read` (it returns each note's links), or use `vault_search`.
+        - Change notes: `vault_read` first and keep its `version`. Then use `vault_edit` for one passage, `vault_append` to add to the end, or `vault_write` to create a note (no version) or replace a whole note (with the version).
+        - On `stale_version`, the note changed since you read it: read it again, merge your change, and retry. On `exists`, read the note and update it instead.
+        - `vault_list` lists a folder's notes, and `vault_backlinks` shows which notes link to one.
+        - The vault checker still runs with `python3 \(vault.path)/.tools/vault_check.py`.
+
+        """
+    }
+
+    /// Appends the Memory Vault tools section to CLAUDE.md once; the rest of the file is kept.
+    static func connectInstructions(_ agent: AgentProfile, vault: URL) throws {
+        let url = URL(fileURLWithPath: agent.path).appendingPathComponent("CLAUDE.md")
+        var text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        guard !text.contains(instructionsMarker) else { return }
+        if !text.isEmpty && !text.hasSuffix("\n") { text += "\n" }
+        text += instructionsSection(vault: vault)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Connects an agent. The server entry is checked every time, so a moved app is repaired. Settings and
+    /// instructions are added only the first time, so the user's later edits to those files are respected.
+    @discardableResult
+    static func connect(_ agent: AgentProfile, executable: URL, vault: URL, firstTime: Bool) throws -> Change {
+        let change = try connectServer(agent, executable: executable.path, vault: vault)
+        if firstTime {
+            try connectSettings(agent, vault: vault)
+            try connectInstructions(agent, vault: vault)
+        }
+        return change
+    }
+
+    /// The entry for the user's own Claude sessions (Projects), as JSON to paste into an .mcp.json.
+    static func projectConfig(executable: URL, vault: URL) -> String {
+        let object: [String: Any] = ["mcpServers": [serverName: serverEntry(executable: executable.path, vault: vault, actor: "project")]]
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
 }
