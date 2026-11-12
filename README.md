@@ -7,7 +7,7 @@ A native macOS workspace with two modes: repository development and persistent a
 Get the latest `ClaudeDesk-<version>.dmg` from [Releases](https://github.com/poom-h/ClaudeDesk/releases), open it, and drag ClaudeDesk into Applications.
 
 Requirements:
-- macOS 14 or newer, on Apple Silicon or Intel.
+- macOS 14 or newer on an Apple Silicon Mac (M1 or later). Intel Macs aren't supported by the release build yet.
 - [Claude Code](https://code.claude.com) installed and signed in. ClaudeDesk runs every conversation and routine through it.
 
 Everything else ships inside the app, including atrium-memory, the Memory Vault tool your agents use.
