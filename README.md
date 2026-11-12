@@ -2,16 +2,30 @@
 
 A native macOS workspace with two modes: repository development and persistent agents. Both run multiple Claude Code instances inside the app.
 
-## Run
+## Download
 
-Requires macOS 14 or newer and Claude Code installed and signed in.
+Get the latest `ClaudeDesk-<version>.dmg` from [Releases](https://github.com/poom-h/ClaudeDesk/releases), open it, and drag ClaudeDesk into Applications.
+
+Requirements:
+- macOS 14 or newer, on Apple Silicon or Intel.
+- [Claude Code](https://code.claude.com) installed and signed in. ClaudeDesk runs every conversation and routine through it.
+
+Everything else ships inside the app, including atrium-memory, the Memory Vault tool your agents use.
+
+**First open.** Releases aren't notarized by Apple yet, so macOS blocks the first launch. To open it anyway:
+1. Open ClaudeDesk once and dismiss the warning.
+2. Go to System Settings › Privacy & Security and click **Open Anyway** next to ClaudeDesk.
+
+Or run `xattr -dr com.apple.quarantine /Applications/ClaudeDesk.app` once. Each release has a `.sha256` file to check the download against: `shasum -a 256 -c ClaudeDesk-<version>.dmg.sha256`.
+
+## Build from source
 
 ```sh
 bash scripts/build-app.sh
 open dist/ClaudeDesk.app
 ```
 
-Drag `dist/ClaudeDesk.app` into Applications to install. The local build is ad-hoc signed; distributing to other Macs requires Developer ID signing and notarization.
+Drag `dist/ClaudeDesk.app` into Applications to install. `bash scripts/make-dmg.sh` then packages it as `dist/ClaudeDesk-<version>.dmg` with a checksum, for a release. Local builds are signed with your own certificate (or ad-hoc); distributing to other Macs without warnings requires Developer ID signing and notarization.
 
 ## Projects mode
 
