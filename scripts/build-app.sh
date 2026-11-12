@@ -5,19 +5,33 @@ source scripts/compiler-env.sh
 mkdir -p .build/release
 mkdir -p .build/SwiftTerm
 find Vendor/SwiftTerm/Sources/SwiftTerm -name '*.swift' -not -path '*/iOS/*' -print > .build/SwiftTerm/sources.txt
-if [[ ! -f .build/SwiftTerm/libSwiftTerm.a ]] || find Vendor/SwiftTerm/Sources/SwiftTerm -name '*.swift' -newer .build/SwiftTerm/libSwiftTerm.a | read -r; then
-    swiftc -O -whole-module-optimization -emit-library -static -emit-module -module-name SwiftTerm \
-        -swift-version 5 -target "$(uname -m)-apple-macosx14.0" "${COMPILER_FLAGS[@]}" \
-        @.build/SwiftTerm/sources.txt -o .build/SwiftTerm/libSwiftTerm.a \
-        -emit-module-path .build/SwiftTerm/SwiftTerm.swiftmodule
-fi
-swiftc -O -parse-as-library -module-name ClaudeDesk -target "$(uname -m)-apple-macosx14.0" \
-    "${COMPILER_FLAGS[@]}" -I .build/SwiftTerm -L .build/SwiftTerm -lSwiftTerm Sources/ClaudeDesk/*.swift -o .build/release/ClaudeDesk
 RUNNER_SOURCES=(Sources/ClaudeDesk/Models.swift Sources/ClaudeDesk/AgentEnvironment.swift Sources/ClaudeDesk/MemoryTool.swift Sources/ClaudeDesk/Workspace.swift
     Sources/ClaudeDesk/Frontmatter.swift Sources/ClaudeDesk/ActivityLog.swift Sources/ClaudeDesk/SkillLibrary.swift
     Sources/ClaudeDesk/Inbox.swift Sources/ClaudeDesk/Routines.swift Sources/ClaudeDesk/RoutineRunner.swift Sources/ClaudeDesk/RunSteps.swift Sources/ClaudeDesk/CockpitData.swift Runner/main.swift)
-swiftc -O -module-name ClaudeDeskRunner -target "$(uname -m)-apple-macosx14.0" "${COMPILER_FLAGS[@]}" \
-    "${RUNNER_SOURCES[@]}" -o .build/release/claudedesk-runner
+# The app and runner are universal: built once per architecture, then joined with lipo. BUILD_ARCHS="arm64" builds
+# one slice for a quicker local build. The host architecture's SwiftTerm stays in .build/SwiftTerm, where the test
+# scripts link against it; other architectures get .build/SwiftTerm-<arch>.
+HOST_ARCH="$(uname -m)"
+read -r -a ARCHS <<< "${BUILD_ARCHS:-arm64 x86_64}"
+for arch in "${ARCHS[@]}"; do
+    if [[ "$arch" == "$HOST_ARCH" ]]; then ST=.build/SwiftTerm; else ST=".build/SwiftTerm-$arch"; fi
+    mkdir -p "$ST" ".build/release/$arch"
+    if [[ ! -f "$ST/libSwiftTerm.a" ]] || find Vendor/SwiftTerm/Sources/SwiftTerm -name '*.swift' -newer "$ST/libSwiftTerm.a" | read -r; then
+        swiftc -O -whole-module-optimization -emit-library -static -emit-module -module-name SwiftTerm \
+            -swift-version 5 -target "$arch-apple-macosx14.0" "${COMPILER_FLAGS[@]}" \
+            @.build/SwiftTerm/sources.txt -o "$ST/libSwiftTerm.a" \
+            -emit-module-path "$ST/SwiftTerm.swiftmodule"
+    fi
+    swiftc -O -parse-as-library -module-name ClaudeDesk -target "$arch-apple-macosx14.0" \
+        "${COMPILER_FLAGS[@]}" -I "$ST" -L "$ST" -lSwiftTerm Sources/ClaudeDesk/*.swift -o ".build/release/$arch/ClaudeDesk"
+    swiftc -O -module-name ClaudeDeskRunner -target "$arch-apple-macosx14.0" "${COMPILER_FLAGS[@]}" \
+        "${RUNNER_SOURCES[@]}" -o ".build/release/$arch/claudedesk-runner"
+done
+for binary in ClaudeDesk claudedesk-runner; do
+    slices=()
+    for arch in "${ARCHS[@]}"; do slices+=(".build/release/$arch/$binary"); done
+    lipo -create "${slices[@]}" -output ".build/release/$binary"
+done
 # atrium-memory, the Memory Vault MCP server, ships inside the app at the version in Resources/atrium-memory.version.
 # Development builds compile it from the local checkout; otherwise the release is downloaded and its checksum checked.
 MEMORY_VERSION="$(tr -d '[:space:]' < Resources/atrium-memory.version)"
@@ -62,8 +76,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>local.claudedesk.app</string>
 <key>CFBundleName</key><string>ClaudeDesk</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>3.8.0</string>
-<key>CFBundleVersion</key><string>13</string>
+<key>CFBundleShortVersionString</key><string>3.8.1</string>
+<key>CFBundleVersion</key><string>14</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSCalendarsFullAccessUsageDescription</key><string>ClaudeDesk shows your upcoming events in the Cockpit's Schedule widget and gives Atlas your day when you ask. It only reads your calendars.</string>
